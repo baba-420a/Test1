@@ -11,7 +11,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract kinetx-ui-redesign.zip
+      - name: Extract project.zip
         id: extract
         run: |
           set -e
@@ -33,6 +33,26 @@ jobs:
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android folder if missing
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          if [ ! -d "android" ]; then
+            PROJECT_NAME=$(awk '/^name:/ {print $2}' pubspec.yaml | tr '[:upper:]' '[:lower:]' | tr '-' '_' || true)
+            flutter create --platforms=android --project-name "${PROJECT_NAME:-my_app}" --org com.example .
+          fi
 
       - name: Upgrade AGP and Gradle wrapper
         working-directory: ${{ steps.extract.outputs.dir }}
@@ -101,26 +121,6 @@ jobs:
 
               wrapper.write_text("\n".join(new_lines) + "\n")
           PY
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Create Android folder if missing
-        working-directory: ${{ steps.extract.outputs.dir }}
-        run: |
-          if [ ! -d "android" ]; then
-            PROJECT_NAME=$(awk '/^name:/ {print $2}' pubspec.yaml | tr '[:upper:]' '[:lower:]' | tr '-' '_' || true)
-            flutter create --platforms=android --project-name "${PROJECT_NAME:-my_app}" --org com.example .
-          fi
 
       - name: Install dependencies
         working-directory: ${{ steps.extract.outputs.dir }}
