@@ -58,7 +58,7 @@ jobs:
 
           agp = "8.11.1"
           kotlin = "2.2.20"
-          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.13-bin.zip"
+          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.14-bin.zip"
 
           def update_lines(path, updater):
               p = pathlib.Path(path)
