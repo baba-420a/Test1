@@ -53,8 +53,8 @@ jobs:
             PROJECT_NAME=$(awk '/^name:/ {print $2}' pubspec.yaml | tr '[:upper:]' '[:lower:]' | tr '-' '_' || true)
             flutter create --platforms=android --project-name "${PROJECT_NAME:-my_app}" --org com.example .
           fi
-
-      - name: Upgrade AGP and Gradle wrapper
+      
+      - name: Upgrade AGP, Gradle, and Kotlin
         working-directory: ${{ steps.extract.outputs.dir }}
         run: |
           python3 - <<'PY'
@@ -62,39 +62,29 @@ jobs:
           import re
 
           agp = "8.11.1"
-          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.14-bin.zip"
+          kotlin = "2.2.20"
+          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.13-bin.zip"
 
           def update_lines(path, updater):
               p = pathlib.Path(path)
               if not p.exists():
                   return
-
               lines = p.read_text().splitlines()
-              new_lines = []
-
-              for line in lines:
-                  new_lines.append(updater(line))
-
+              new_lines = [updater(line) for line in lines]
               p.write_text("\n".join(new_lines) + "\n")
 
           def update_settings(line):
               if ("com.android.application" in line or "com.android.library" in line) and "version" in line.lower():
-                  line = re.sub(
-                      r'(version\D{0,20})\d+\.\d+\.\d+',
-                      r'\g<1>' + agp,
-                      line,
-                      count=1,
-                      flags=re.IGNORECASE
-                  )
+                  line = re.sub(r'(version\D{0,20})\d+\.\d+\.\d+', r'\g<1>' + agp, line, count=1, flags=re.IGNORECASE)
+              if "org.jetbrains.kotlin.android" in line and "version" in line.lower():
+                  line = re.sub(r'(version\D{0,20})\d+\.\d+\.\d+', r'\g<1>' + kotlin, line, count=1, flags=re.IGNORECASE)
               return line
 
           def update_buildscript(line):
               if "com.android.tools.build:gradle:" in line:
-                  line = re.sub(
-                      r'com\.android\.tools\.build:gradle:\d+\.\d+\.\d+',
-                      f'com.android.tools.build:gradle:{agp}',
-                      line
-                  )
+                  line = re.sub(r'com\.android\.tools\.build:gradle:\d+\.\d+\.\d+', f'com.android.tools.build:gradle:{agp}', line)
+              if "kotlin_version" in line and "=" in line:
+                  line = re.sub(r'(kotlin_version\s*=\s*["\'])\d+\.\d+\.\d+', r'\g<1>' + kotlin, line)
               return line
 
           update_lines("android/settings.gradle", update_settings)
@@ -102,23 +92,31 @@ jobs:
           update_lines("android/build.gradle", update_buildscript)
           update_lines("android/build.gradle.kts", update_buildscript)
 
-          wrapper = pathlib.Path("android/gradle/wrapper/gradle-wrapper.properties")
+          toml = pathlib.Path("android/gradle/libs.versions.toml")
+          if toml.exists():
+              lines = toml.read_text().splitlines()
+              new_lines = []
+              for line in lines:
+                  if line.strip().startswith("agp") and "=" in line:
+                      line = re.sub(r'(=\s*["\'])\d+\.\d+\.\d+', r'\g<1>' + agp, line)
+                  elif line.strip().startswith("kotlin") and "=" in line:
+                      line = re.sub(r'(=\s*["\'])\d+\.\d+\.\d+', r'\g<1>' + kotlin, line)
+                  new_lines.append(line)
+              toml.write_text("\n".join(new_lines) + "\n")
 
+          wrapper = pathlib.Path("android/gradle/wrapper/gradle-wrapper.properties")
           if wrapper.exists():
               lines = wrapper.read_text().splitlines()
               new_lines = []
               found = False
-
               for line in lines:
                   if line.strip().startswith("distributionUrl"):
                       new_lines.append(gradle_url_line)
                       found = True
                   else:
                       new_lines.append(line)
-
               if not found:
                   new_lines.append(gradle_url_line)
-
               wrapper.write_text("\n".join(new_lines) + "\n")
           PY
 
