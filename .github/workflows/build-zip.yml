@@ -169,7 +169,7 @@ jobs:
 
       - name: Build release APK
         working-directory: ${{ steps.extract.outputs.dir }}
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
