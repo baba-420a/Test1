@@ -11,7 +11,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract project.zip
+      - name: Extract kinetx-ui-redesign.zip
         id: extract
         run: |
           set -e
@@ -33,6 +33,74 @@ jobs:
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upgrade AGP and Gradle wrapper
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          agp = "8.11.1"
+          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.13-bin.zip"
+
+          def update_lines(path, updater):
+              p = pathlib.Path(path)
+              if not p.exists():
+                  return
+
+              lines = p.read_text().splitlines()
+              new_lines = []
+
+              for line in lines:
+                  new_lines.append(updater(line))
+
+              p.write_text("\n".join(new_lines) + "\n")
+
+          def update_settings(line):
+              if ("com.android.application" in line or "com.android.library" in line) and "version" in line.lower():
+                  line = re.sub(
+                      r'(version\D{0,20})\d+\.\d+\.\d+',
+                      r'\g<1>' + agp,
+                      line,
+                      count=1,
+                      flags=re.IGNORECASE
+                  )
+              return line
+
+          def update_buildscript(line):
+              if "com.android.tools.build:gradle:" in line:
+                  line = re.sub(
+                      r'com\.android\.tools\.build:gradle:\d+\.\d+\.\d+',
+                      f'com.android.tools.build:gradle:{agp}',
+                      line
+                  )
+              return line
+
+          update_lines("android/settings.gradle", update_settings)
+          update_lines("android/settings.gradle.kts", update_settings)
+          update_lines("android/build.gradle", update_buildscript)
+          update_lines("android/build.gradle.kts", update_buildscript)
+
+          wrapper = pathlib.Path("android/gradle/wrapper/gradle-wrapper.properties")
+
+          if wrapper.exists():
+              lines = wrapper.read_text().splitlines()
+              new_lines = []
+              found = False
+
+              for line in lines:
+                  if line.strip().startswith("distributionUrl"):
+                      new_lines.append(gradle_url_line)
+                      found = True
+                  else:
+                      new_lines.append(line)
+
+              if not found:
+                  new_lines.append(gradle_url_line)
+
+              wrapper.write_text("\n".join(new_lines) + "\n")
+          PY
 
       - name: Setup Java
         uses: actions/setup-java@v4
