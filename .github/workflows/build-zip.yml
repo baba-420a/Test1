@@ -1,1 +1,70 @@
+name: Build APK from kinetx-ui-redesign.zip
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project.zip
+        id: extract
+        run: |
+          set -e
+
+          if [ ! -f kinetx-ui-redesign.zip ]; then
+            echo "kinetx-ui-redesign.zip not found. Upload it to the repository root."
+            exit 1
+          fi
+
+          mkdir extracted
+          unzip -q kinetx-ui-redesign.zip -d extracted
+
+          PUBSPEC=$(find extracted -maxdepth 6 -name pubspec.yaml -not -path '*/build/*' -not -path '*/.dart_tool/*' -not -path '*/.pub-cache/*' | head -n 1)
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "pubspec.yaml not found inside kinetx-ui-redesign.zip"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android folder if missing
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          if [ ! -d "android" ]; then
+            PROJECT_NAME=$(awk '/^name:/ {print $2}' pubspec.yaml | tr '[:upper:]' '[:lower:]' | tr '-' '_' || true)
+            flutter create --platforms=android --project-name "${PROJECT_NAME:-my_app}" --org com.example .
+          fi
+
+      - name: Install dependencies
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: flutter build apk --release
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            ${{ steps.extract.outputs.dir }}/build/app/outputs/flutter-apk/*.apk
