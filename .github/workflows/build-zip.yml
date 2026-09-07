@@ -1,4 +1,4 @@
-name: Build APK from kinetx-ui-redesign.zip
+name: Build APK from project.zip
 
 on:
   workflow_dispatch:
@@ -11,29 +11,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract kinetx-ui-redesign.zip
+      - name: Extract project.zip
         id: extract
         run: |
           set -e
-          if [ ! -f kinetx-ui-redesign.zip ]; then
-            echo "kinetx-ui-redesign.zip not found. Upload it to the repository root."
+          if [ ! -f project.zip ]; then
+            echo "project.zip not found. Upload it to the repository root."
             exit 1
           fi
           mkdir -p extracted
-          unzip -q kinetx-ui-redesign.zip -d extracted
+          unzip -q project.zip -d extracted
           PUBSPEC=$(find extracted -maxdepth 6 -name pubspec.yaml -not -path '*/build/*' -not -path '*/.dart_tool/*' -not -path '*/.pub-cache/*' | head -n 1)
           if [ -z "$PUBSPEC" ]; then
-            echo "pubspec.yaml not found inside kinetx-ui-redesign.zip"
+            echo "pubspec.yaml not found inside project.zip"
             exit 1
           fi
           PROJECT_DIR=$(dirname "$PUBSPEC")
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -49,16 +49,16 @@ jobs:
             flutter create --platforms=android --project-name "${PROJECT_NAME:-my_app}" --org com.example .
           fi
 
-      - name: Upgrade AGP, Gradle, Kotlin & Patch Plugins
+      - name: Upgrade Project Gradle Settings
         working-directory: ${{ steps.extract.outputs.dir }}
         run: |
           python3 - <<'PY'
           import pathlib
           import re
 
-          agp = "9.0.1"
-          kotlin = "2.3.20"
-          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-9.1.0-bin.zip"
+          agp = "8.11.1"
+          kotlin = "2.2.20"
+          gradle_url_line = "distributionUrl=https" + chr(92) + "://services.gradle.org/distributions/gradle-8.13-bin.zip"
 
           def update_lines(path, updater):
               p = pathlib.Path(path)
@@ -113,26 +113,59 @@ jobs:
               if not found:
                   new_lines.append(gradle_url_line)
               wrapper.write_text("\n".join(new_lines) + "\n")
-
-          # Patch on_audio_query_android namespace issue (known bug in archived package)
-          pub_cache = pathlib.Path("/home/runner/.pub-cache/hosted/pub.dev")
-          if pub_cache.exists():
-              for plugin_dir in pub_cache.glob("on_audio_query_android-*"):
-                  build_gradle = plugin_dir / "android" / "build.gradle"
-                  if build_gradle.exists():
-                      content = build_gradle.read_text()
-                      if "namespace" not in content:
-                          new_content = re.sub(
-                              r'(android\s*\{)',
-                              r'\1\n    namespace "com.lucasjosino.on_audio_query"',
-                              content
-                          )
-                          build_gradle.write_text(new_content)
           PY
 
       - name: Install dependencies
         working-directory: ${{ steps.extract.outputs.dir }}
         run: flutter pub get
+
+      - name: Patch Plugin Namespaces (Fixes on_audio_query and others)
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import os
+
+          pub_cache = pathlib.Path(os.path.expanduser("~/.pub-cache/hosted/pub.dev"))
+          if not pub_cache.exists():
+              pub_cache = pathlib.Path("/home/runner/.pub-cache/hosted/pub.dev")
+              
+          if pub_cache.exists():
+              # Scan ALL downloaded plugins for missing namespaces
+              for build_gradle in pub_cache.rglob("android/build.gradle*"):
+                  try:
+                      content = build_gradle.read_text()
+                      # If it has android { but no namespace defined
+                      if re.search(r'android\s*\{', content) and "namespace " not in content and "namespace=" not in content:
+                          # Try to find the correct namespace from AndroidManifest.xml
+                          manifest = build_gradle.parent / "src" / "main" / "AndroidManifest.xml"
+                          ns = "com.plugin.default"
+                          if manifest.exists():
+                              manifest_content = manifest.read_text()
+                              pkg_match = re.search(r'package="([^"]+)"', manifest_content)
+                              if pkg_match:
+                                  ns = pkg_match.group(1)
+                          
+                          # Inject namespace based on Groovy or Kotlin DSL
+                          if build_gradle.name.endswith(".kts"):
+                              new_content = re.sub(
+                                  r'(android\s*\{)',
+                                  f'\\1\n    namespace = "{ns}"',
+                                  content,
+                                  count=1
+                              )
+                          else:
+                              new_content = re.sub(
+                                  r'(android\s*\{)',
+                                  f'\\1\n    namespace "{ns}"',
+                                  content,
+                                  count=1
+                              )
+                          build_gradle.write_text(new_content)
+                          print(f"Successfully patched namespace for {build_gradle} -> {ns}")
+                  except Exception as e:
+                      print(f"Failed to patch {build_gradle}: {e}")
+          PY
 
       - name: Build release APK
         working-directory: ${{ steps.extract.outputs.dir }}
